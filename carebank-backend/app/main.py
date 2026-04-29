@@ -13,6 +13,11 @@ from app.routes.transactions import router as transactions_router
 
 settings = get_settings()
 
+# Support a single URL or comma-separated list in FRONTEND_URL.
+configured_origins = [origin.strip().rstrip("/") for origin in settings.frontend_url.split(",") if origin.strip()]
+default_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+allow_origins = sorted(set(configured_origins + default_origins))
+
 app = FastAPI(
     title="CareBank API",
     description="AI-powered financial wellness system with multi-agent analysis.",
@@ -21,7 +26,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_url, "http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=allow_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
