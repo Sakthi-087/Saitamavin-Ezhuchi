@@ -1,16 +1,5 @@
 {
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "framework": "vite",
-  "env": {
-    "VITE_API_URL": {
-      "description": "Backend API URL (e.g., https://carebank-backend.onrender.com)"
-    },
-    "VITE_SUPABASE_URL": {
-      "description": "Supabase project URL"
-    },
-    "VITE_SUPABASE_ANON_KEY": {
-      "description": "Supabase anonymous key"
-    }
-  }
+  "framework": "vite"
 }
