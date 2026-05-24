@@ -20,4 +20,7 @@ class FinancialHealthAgent:
             savings_rate=round(savings_rate, 2),
             breakdown=score_result.breakdown,
             metrics=score_result.metrics,
+            scoring_version=score_result.scoring_version,
+            explainability=score_result.explainability,
+            confidence=score_result.confidence,
         )

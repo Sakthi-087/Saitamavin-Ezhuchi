@@ -12,6 +12,7 @@ from fastapi import HTTPException, status
 
 from app.core.config import Settings
 from app.models.schemas import ManualTransactionRequest, Transaction, UserContext
+from app.services.categorization_service import CategorizationService
 from app.services.transaction_utils import normalize_transaction
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,11 @@ logger = logging.getLogger(__name__)
 class SupabaseService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self.categorization = CategorizationService(
+            Path(__file__).resolve().parents[2],
+            ai_enabled=settings.ai_categorization_enabled,
+            ai_model=settings.ai_categorization_model,
+        )
 
     async def verify_access_token(self, access_token: str) -> UserContext:
         try:
@@ -30,9 +36,6 @@ class SupabaseService:
                 )
         except httpx.RequestError as exc:
             logger.exception("Supabase auth request failed while verifying the access token.")
-            if self.settings.enable_sample_data_fallback:
-                logger.warning("Falling back to demo user because ENABLE_SAMPLE_DATA_FALLBACK is enabled.")
-                return UserContext(id="demo-user", email="demo@carebank.local")
             raise self._service_unavailable("Supabase auth is currently unavailable.", exc) from exc
 
         if response.status_code != status.HTTP_200_OK:
@@ -108,7 +111,209 @@ class SupabaseService:
         self._raise_for_supabase_error(response, "Failed to insert transactions into Supabase.")
         return len(response.json())
 
-    def parse_csv_upload(self, content: str, user: UserContext) -> tuple[list[dict[str, object]], list[str]]:
+    async def persist_behavior_snapshot(
+        self,
+        access_token: str,
+        *,
+        user_id: str,
+        snapshot: dict[str, object],
+    ) -> None:
+        payload = [
+            {
+                "user_id": user_id,
+                "snapshot": snapshot,
+                "created_at": datetime.now(UTC).isoformat(),
+            }
+        ]
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.post(
+                    f"{self.settings.supabase_url}/rest/v1/behavior_snapshots",
+                    headers={
+                        **self._headers(access_token),
+                        "Content-Type": "application/json",
+                        "Prefer": "return=minimal",
+                    },
+                    json=payload,
+                )
+        except httpx.RequestError:
+            logger.warning("Behavior snapshot persistence skipped due to Supabase request error.")
+            return
+
+        if response.is_success:
+            return
+
+        detail = response.text[:200]
+        try:
+            body = response.json()
+            detail = str(body.get("message") or body.get("error") or body.get("error_description") or detail)
+        except ValueError:
+            pass
+
+        if response.status_code in {400, 404}:
+            logger.warning("Behavior snapshot persistence skipped (table may be missing): %s", detail)
+            return
+
+        logger.warning("Behavior snapshot persistence failed with status=%s detail=%s", response.status_code, detail)
+
+    async def persist_risk_snapshot(
+        self,
+        access_token: str,
+        *,
+        user_id: str,
+        snapshot: dict[str, object],
+    ) -> None:
+        payload = [
+            {
+                "user_id": user_id,
+                "snapshot": snapshot,
+                "created_at": datetime.now(UTC).isoformat(),
+            }
+        ]
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.post(
+                    f"{self.settings.supabase_url}/rest/v1/risk_snapshots",
+                    headers={
+                        **self._headers(access_token),
+                        "Content-Type": "application/json",
+                        "Prefer": "return=minimal",
+                    },
+                    json=payload,
+                )
+        except httpx.RequestError:
+            logger.warning("Risk snapshot persistence skipped due to Supabase request error.")
+            return
+
+        if response.is_success:
+            return
+
+        detail = response.text[:200]
+        try:
+            body = response.json()
+            detail = str(body.get("message") or body.get("error") or body.get("error_description") or detail)
+        except ValueError:
+            pass
+
+        if response.status_code in {400, 404}:
+            logger.warning("Risk snapshot persistence skipped (table may be missing): %s", detail)
+            return
+        logger.warning("Risk snapshot persistence failed with status=%s detail=%s", response.status_code, detail)
+
+    async def persist_guidance_snapshot(
+        self,
+        access_token: str,
+        *,
+        user_id: str,
+        snapshot: dict[str, object],
+    ) -> None:
+        payload = [
+            {
+                "user_id": user_id,
+                "snapshot": snapshot,
+                "created_at": datetime.now(UTC).isoformat(),
+            }
+        ]
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.post(
+                    f"{self.settings.supabase_url}/rest/v1/guidance_snapshots",
+                    headers={**self._headers(access_token), "Content-Type": "application/json", "Prefer": "return=minimal"},
+                    json=payload,
+                )
+        except httpx.RequestError:
+            logger.warning("Guidance snapshot persistence skipped due to Supabase request error.")
+            return
+        if response.is_success:
+            return
+        if response.status_code in {400, 404}:
+            logger.warning("Guidance snapshot persistence skipped (table may be missing).")
+            return
+        logger.warning("Guidance snapshot persistence failed with status=%s", response.status_code)
+
+    async def persist_guidance_items(
+        self,
+        access_token: str,
+        *,
+        user_id: str,
+        items: list[dict[str, object]],
+    ) -> None:
+        if not items:
+            return
+        payload = []
+        for item in items:
+            payload.append(
+                {
+                    "user_id": user_id,
+                    "guidance_id": item.get("guidance_id"),
+                    "guidance_type": item.get("guidance_type"),
+                    "priority": item.get("priority"),
+                    "confidence": item.get("confidence"),
+                    "actionability_score": item.get("actionability_score"),
+                    "title": item.get("title"),
+                    "rationale": item.get("rationale"),
+                    "action_steps": item.get("action_steps"),
+                    "expected_impact": item.get("expected_impact"),
+                    "source_signals": item.get("source_signals"),
+                    "related_risk_events": item.get("related_risk_events"),
+                    "ttl_days": item.get("ttl_days"),
+                    "created_at": item.get("created_at") or datetime.now(UTC).isoformat(),
+                }
+            )
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.post(
+                    f"{self.settings.supabase_url}/rest/v1/guidance_items",
+                    headers={**self._headers(access_token), "Content-Type": "application/json", "Prefer": "return=minimal"},
+                    json=payload,
+                )
+        except httpx.RequestError:
+            logger.warning("Guidance items persistence skipped due to Supabase request error.")
+            return
+        if response.is_success:
+            return
+        if response.status_code in {400, 404}:
+            logger.warning("Guidance items persistence skipped (table may be missing).")
+            return
+        logger.warning("Guidance items persistence failed with status=%s", response.status_code)
+
+    async def persist_financial_score_snapshot(
+        self,
+        access_token: str,
+        *,
+        user_id: str,
+        snapshot: dict[str, object],
+    ) -> None:
+        payload = [
+            {
+                "user_id": user_id,
+                "created_at": datetime.now(UTC).isoformat(),
+                "score": snapshot.get("score"),
+                "status": snapshot.get("status"),
+                "scoring_version": snapshot.get("scoring_version"),
+                "confidence": snapshot.get("confidence"),
+                "explainability": snapshot.get("explainability"),
+                "snapshot": snapshot,
+            }
+        ]
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.post(
+                    f"{self.settings.supabase_url}/rest/v1/financial_score_snapshots",
+                    headers={**self._headers(access_token), "Content-Type": "application/json", "Prefer": "return=minimal"},
+                    json=payload,
+                )
+        except httpx.RequestError:
+            logger.warning("Financial score snapshot persistence skipped due to Supabase request error.")
+            return
+        if response.is_success:
+            return
+        if response.status_code in {400, 404}:
+            logger.warning("Financial score snapshot persistence skipped (table may be missing).")
+            return
+        logger.warning("Financial score snapshot persistence failed with status=%s", response.status_code)
+
+    async def parse_csv_upload(self, content: str, user: UserContext) -> tuple[list[dict[str, object]], list[str]]:
         try:
             sample = content[:1024]
             dialect = csv.Sniffer().sniff(sample)
@@ -124,8 +329,15 @@ class SupabaseService:
                 created_at = self._parse_date(self._pick_required(record, ["date", "created_at", "transaction_date", "posted_at"]))
                 amount = self._parse_amount(self._pick_required(record, ["amount", "value", "amt", "debit", "credit"]))
                 description = self._pick_optional(record, ["description", "details", "narration", "merchant"]) or "Imported transaction"
-                category = self._pick_optional(record, ["category", "type"]) or self._infer_category(description)
-                rows.append(self.build_transaction_row(user=user, created_at=created_at, amount=amount, description=description, category=category))
+                provided_category = self._pick_optional(record, ["category", "type"]) or None
+                row = await self.build_transaction_row_async(
+                    user=user,
+                    created_at=created_at,
+                    amount=amount,
+                    description=description,
+                    category=provided_category,
+                )
+                rows.append(row)
             except ValueError as exc:
                 errors.append(f"Row {index}: {exc}")
 
@@ -147,14 +359,63 @@ class SupabaseService:
         created_at: str,
         amount: float,
         description: str,
-        category: str,
+        category: str | None = None,
     ) -> dict[str, object]:
         normalized_description = description.strip() or "Imported transaction"
-        normalized_category = category.strip() or self._infer_category(normalized_description)
+        category_result = self.categorization.categorize_sync(
+            user_id=user.id,
+            description=normalized_description,
+            user_category=(category or "").strip() or None,
+        )
+        raw_amount = float(amount)
+        normalized_amount = abs(raw_amount)
+        tx_type = "credit" if raw_amount > 0 else "debit"
         return {
             "user_id": user.id,
-            "amount": abs(float(amount)),
-            "category": normalized_category,
+            "amount": normalized_amount,
+            "raw_amount": raw_amount,
+            "normalized_amount": normalized_amount,
+            "transaction_type": tx_type,
+            "category": category_result.category,
+            "subcategory": category_result.subcategory,
+            "category_confidence": category_result.confidence,
+            "category_source": category_result.source,
+            "category_matched_rule": category_result.matched_rule,
+            "category_reason": category_result.reason,
+            "description": normalized_description,
+            "created_at": created_at,
+        }
+
+    async def build_transaction_row_async(
+        self,
+        *,
+        user: UserContext,
+        created_at: str,
+        amount: float,
+        description: str,
+        category: str | None = None,
+    ) -> dict[str, object]:
+        normalized_description = description.strip() or "Imported transaction"
+        category_result = await self.categorization.categorize_async(
+            user_id=user.id,
+            description=normalized_description,
+            user_category=(category or "").strip() or None,
+        )
+        raw_amount = float(amount)
+        normalized_amount = abs(raw_amount)
+        tx_type = "credit" if raw_amount > 0 else "debit"
+        return {
+            "user_id": user.id,
+            "amount": normalized_amount,
+            "raw_amount": raw_amount,
+            "normalized_amount": normalized_amount,
+            "transaction_type": tx_type,
+            "category": category_result.category,
+            "subcategory": category_result.subcategory,
+            "category_confidence": category_result.confidence,
+            "category_source": category_result.source,
+            "category_matched_rule": category_result.matched_rule,
+            "category_reason": category_result.reason,
             "description": normalized_description,
             "created_at": created_at,
         }
@@ -163,6 +424,12 @@ class SupabaseService:
         return {
             "apikey": self.settings.supabase_anon_key,
             "Authorization": f"Bearer {access_token}",
+        }
+
+    def _service_role_headers(self) -> dict[str, str]:
+        return {
+            "apikey": self.settings.supabase_service_role_key,
+            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
         }
 
     def _pick_required(self, record: dict[str, str | None], keys: list[str]) -> str:
@@ -206,18 +473,6 @@ class SupabaseService:
             return float(cleaned)
         except ValueError as exc:
             raise ValueError(f"Invalid amount '{value}'.") from exc
-
-    def _infer_category(self, description: str) -> str:
-        text = description.lower()
-        if any(token in text for token in ["grocery", "food", "dining", "restaurant", "delivery", "mart"]):
-            return "Food"
-        if any(token in text for token in ["flight", "train", "taxi", "cab", "metro", "travel", "bus"]):
-            return "Travel"
-        if any(token in text for token in ["bill", "electricity", "water", "broadband", "internet", "rent"]):
-            return "Bills"
-        if any(token in text for token in ["shop", "fashion", "marketplace", "store", "order"]):
-            return "Shopping"
-        return "Uncategorized"
 
     def _raise_for_supabase_error(self, response: httpx.Response, message: str) -> None:
         if response.is_success:
@@ -265,3 +520,147 @@ class SupabaseService:
             }
             for item in payload
         ]
+
+    async def persist_system_event_service(self, payload: dict[str, object]) -> bool:
+        return await self._persist_service_role("system_events", payload)
+
+    async def persist_processing_event_service(self, payload: dict[str, object]) -> bool:
+        return await self._persist_service_role("processing_events", payload)
+
+    async def persist_live_alert_event_service(self, payload: dict[str, object]) -> bool:
+        return await self._persist_service_role("live_alert_events", payload)
+
+    async def persist_dead_letter_event_service(self, payload: dict[str, object]) -> bool:
+        return await self._persist_service_role("dead_letter_events", payload)
+
+    async def persist_event_replay_history_service(self, payload: dict[str, object]) -> bool:
+        return await self._persist_service_role("event_replay_history", payload)
+
+    async def persist_audit_log_service(self, payload: dict[str, object]) -> bool:
+        return await self._persist_service_role("audit_logs", payload)
+
+    async def _persist_service_role(self, table: str, payload: dict[str, object]) -> bool:
+        if not self.settings.enable_audit_persistence or not self.settings.supabase_service_role_configured:
+            return False
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.post(
+                    f"{self.settings.supabase_url}/rest/v1/{table}",
+                    headers={**self._service_role_headers(), "Content-Type": "application/json", "Prefer": "return=minimal"},
+                    json=[payload],
+                )
+        except httpx.RequestError:
+            logger.warning("Service-role persistence failed for table=%s due to request error.", table)
+            return False
+        if response.is_success:
+            return True
+        logger.warning("Service-role persistence failed for table=%s status=%s", table, response.status_code)
+        return False
+
+    async def get_financial_score_history(self, access_token: str, user_id: str, *, limit: int = 25) -> list[dict[str, object]]:
+        return await self._get_user_history(
+            access_token,
+            table="financial_score_snapshots",
+            user_id=user_id,
+            limit=limit,
+            select="id,score,status,scoring_version,confidence,created_at",
+        )
+
+    async def get_risk_event_history(self, access_token: str, user_id: str, *, limit: int = 25) -> list[dict[str, object]]:
+        # Prefer dedicated risk_events table when available; fallback to risk_snapshots projections.
+        rows = await self._get_user_history(
+            access_token,
+            table="risk_events",
+            user_id=user_id,
+            limit=limit,
+            select="id,payload,created_at,correlation_id",
+        )
+        if rows:
+            return rows
+        return await self._get_user_history(
+            access_token,
+            table="risk_snapshots",
+            user_id=user_id,
+            limit=limit,
+            select="id,snapshot,created_at,correlation_id",
+        )
+
+    async def get_guidance_history(self, access_token: str, user_id: str, *, limit: int = 25) -> list[dict[str, object]]:
+        return await self._get_user_history(
+            access_token,
+            table="guidance_items",
+            user_id=user_id,
+            limit=limit,
+            select="id,guidance_id,guidance_type,priority,title,confidence,actionability_score,created_at",
+        )
+
+    async def get_behavior_history(self, access_token: str, user_id: str, *, limit: int = 25) -> list[dict[str, object]]:
+        return await self._get_user_history(
+            access_token,
+            table="behavior_snapshots",
+            user_id=user_id,
+            limit=limit,
+            select="id,snapshot,created_at,correlation_id",
+        )
+
+    async def get_audit_history(self, access_token: str, user_id: str, *, limit: int = 25) -> list[dict[str, object]]:
+        del access_token
+        if not self.settings.supabase_service_role_configured:
+            return []
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                response = await client.get(
+                    f"{self.settings.supabase_url}/rest/v1/audit_logs",
+                    params={
+                        "select": "id,audit_type,severity,created_at,metadata,user_id",
+                        "order": "created_at.desc",
+                        "limit": max(1, min(int(limit), 200)),
+                        "or": f"(user_id.eq.{user_id},user_id.is.null)",
+                    },
+                    headers=self._service_role_headers(),
+                )
+        except httpx.RequestError:
+            return []
+        if not response.is_success:
+            return []
+        results: list[dict[str, object]] = []
+        for row in response.json():
+            meta = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+            results.append(
+                {
+                    "id": row.get("id"),
+                    "audit_type": row.get("audit_type"),
+                    "severity": row.get("severity"),
+                    "created_at": row.get("created_at"),
+                    "metadata": {"event_type": meta.get("event_type"), "correlation_id": meta.get("correlation_id")},
+                }
+            )
+        return results
+
+    async def _get_user_history(
+        self,
+        access_token: str,
+        *,
+        table: str,
+        user_id: str,
+        limit: int,
+        select: str,
+    ) -> list[dict[str, object]]:
+        bounded_limit = max(1, min(int(limit), 200))
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                response = await client.get(
+                    f"{self.settings.supabase_url}/rest/v1/{table}",
+                    params={
+                        "select": select,
+                        "user_id": f"eq.{user_id}",
+                        "order": "created_at.desc",
+                        "limit": bounded_limit,
+                    },
+                    headers=self._headers(access_token),
+                )
+        except httpx.RequestError:
+            return []
+        if not response.is_success:
+            return []
+        return response.json()

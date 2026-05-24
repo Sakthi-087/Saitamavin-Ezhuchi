@@ -1,23 +1,55 @@
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const DEFAULT_TIMEOUT_MS = 15000
 
-async function apiRequest(path, { accessToken, ...options } = {}) {
+function mapSafeErrorMessage(status) {
+  if (status === 401 || status === 403) return 'Your session has expired. Please sign in again.'
+  if (status === 404) return 'The requested resource is not available right now.'
+  if (status === 429) return 'Too many requests. Please wait a moment and try again.'
+  if (status >= 500) return 'The server is temporarily unavailable. Please try again.'
+  return 'We could not complete this request. Please try again.'
+}
+
+function toRealtimeUrl(baseUrl, userId, token) {
+  const url = new URL(baseUrl)
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  url.pathname = `/ws/${encodeURIComponent(userId)}`
+  url.searchParams.set('token', token)
+  return url.toString()
+}
+
+async function apiRequest(path, { accessToken, timeoutMs = DEFAULT_TIMEOUT_MS, ...options } = {}) {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
   const headers = new Headers(options.headers || {})
   if (accessToken) {
     headers.set('Authorization', `Bearer ${accessToken}`)
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers,
-  })
+  let response
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...options,
+      headers,
+      signal: controller.signal,
+    })
+  } catch {
+    clearTimeout(timeoutId)
+    const error = new Error('Network connection failed. Please check your connection and try again.')
+    error.isNetworkError = true
+    throw error
+  } finally {
+    clearTimeout(timeoutId)
+  }
 
   if (!response.ok) {
-    let detail = 'Request failed'
+    let detail = mapSafeErrorMessage(response.status)
     try {
       const payload = await response.json()
-      detail = payload.detail || detail
+      if (typeof payload?.detail === 'string' && payload.detail.length < 180) {
+        detail = payload.detail
+      }
     } catch {
-      // Ignore JSON parsing errors and use the generic message.
+      // Keep sanitized message when parsing fails.
     }
     const error = new Error(detail)
     error.status = response.status
@@ -34,6 +66,18 @@ export function fetchAnalysis(accessToken) {
 
 export function fetchFinancialScore(accessToken) {
   return apiRequest('/financial-score', { accessToken })
+}
+
+export function fetchBehaviorAnalysis(accessToken) {
+  return apiRequest('/behavior-analysis', { accessToken })
+}
+
+export function fetchRiskAnalysis(accessToken) {
+  return apiRequest('/risk-analysis', { accessToken })
+}
+
+export function fetchGuidance(accessToken) {
+  return apiRequest('/guidance', { accessToken })
 }
 
 export function fetchFraudCheck(accessToken) {
@@ -64,6 +108,31 @@ export function simulateDecision(payload, accessToken) {
 
 export function fetchHealth() {
   return apiRequest('/health')
+}
+
+function withLimit(path, limit) {
+  const bounded = Math.max(1, Math.min(Number(limit) || 25, 200))
+  return `${path}?limit=${bounded}`
+}
+
+export function fetchFinancialScoreHistory(accessToken, limit = 25) {
+  return apiRequest(withLimit('/history/financial-scores', limit), { accessToken })
+}
+
+export function fetchRiskEventHistory(accessToken, limit = 25) {
+  return apiRequest(withLimit('/history/risk-events', limit), { accessToken })
+}
+
+export function fetchGuidanceHistory(accessToken, limit = 25) {
+  return apiRequest(withLimit('/history/guidance-items', limit), { accessToken })
+}
+
+export function fetchBehaviorSnapshotHistory(accessToken, limit = 25) {
+  return apiRequest(withLimit('/history/behavior-snapshots', limit), { accessToken })
+}
+
+export function fetchAuditEventHistory(accessToken, limit = 25) {
+  return apiRequest(withLimit('/history/audit-events', limit), { accessToken })
 }
 
 export function fetchPreferences(accessToken) {
@@ -101,4 +170,24 @@ export function createManualTransaction(payload, accessToken) {
     },
     body: JSON.stringify(payload),
   })
+}
+
+export function connectRealtime(userId, token, handlers = {}) {
+  const ws = new WebSocket(toRealtimeUrl(API_BASE_URL, userId, token))
+  const { onOpen, onClose, onError, onMessage } = handlers
+
+  ws.onopen = (event) => {
+    if (typeof onOpen === 'function') onOpen(event)
+  }
+  ws.onclose = (event) => {
+    if (typeof onClose === 'function') onClose(event)
+  }
+  ws.onerror = (event) => {
+    if (typeof onError === 'function') onError(event)
+  }
+  ws.onmessage = (event) => {
+    if (typeof onMessage === 'function') onMessage(event)
+  }
+
+  return ws
 }

@@ -5,3 +5,8 @@ __pycache__/
 *.pyc
 .env
 carebank-frontend/.env
+carebank-backend/data/snapshots/
+carebank-backend/data/*.json
+carebank-backend/data/*.jsonl
+carebank-backend/.pytest_cache/
+carebank-frontend/dist/

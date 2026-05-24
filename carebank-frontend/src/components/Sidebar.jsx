@@ -1,6 +1,10 @@
 const items = [
   { key: 'dashboard', label: 'Overview' },
-  { key: 'analytics', label: 'Scoring & Risk' },
+  { key: 'behavior', label: 'Behavior' },
+  { key: 'risk', label: 'Risk' },
+  { key: 'guidance', label: 'Guidance' },
+  { key: 'history', label: 'History' },
+  { key: 'analytics', label: 'Scoring' },
   { key: 'assistant', label: 'Decision Lab' },
   { key: 'settings', label: 'Data Controls' },
 ]

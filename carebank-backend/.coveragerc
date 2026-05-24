@@ -1,0 +1,14 @@
+[run]
+source = app
+omit =
+    */tests/*
+    */.venv/*
+    */supabase/migrations/*
+    */data/snapshots/*
+    */data/*.json
+    */data/*.jsonl
+
+[report]
+show_missing = true
+skip_covered = false
+precision = 2

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 class LLMService:
@@ -32,6 +35,16 @@ class LLMService:
         )
         response = await self._chat_completion(prompt)
         return response or self._fallback_chat(question, payload)
+
+    async def answer_question_structured(self, question: str, payload: dict[str, Any]) -> str | None:
+        prompt = (
+            "You are CareBank, a financial wellness assistant. Return JSON only with keys: "
+            "answer, confidence, evidence_keys, limitations. "
+            "Confidence must be numeric 0..1. Evidence keys must reference provided context keys only.\n\n"
+            f"Context:\n{json.dumps(payload, indent=2)}\n\n"
+            f"User question: {question}"
+        )
+        return await self._chat_completion(prompt)
 
     async def explain_simulation(self, payload: dict[str, Any]) -> str:
         prompt = (
@@ -82,7 +95,8 @@ class LLMService:
                 response.raise_for_status()
                 payload = response.json()
                 return payload["choices"][0]["message"]["content"].strip()
-        except Exception:
+        except (httpx.HTTPError, TimeoutError, json.JSONDecodeError, KeyError, ValueError):
+            logger.warning("LLM call failed; using deterministic fallback.")
             return None
 
     def _fallback_explanation(self, payload: dict[str, Any]) -> str:

@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import AuthScreen from '../components/AuthScreen'
 import Sidebar from '../components/Sidebar'
-import DashboardPage from './DashboardPage'
-import Analytics from './Analytics'
-import AIAssistant from './AIAssistant'
-import Settings from './Settings'
+import Chat from '../components/Chat'
+import LoadingSkeleton from '../components/ui/LoadingSkeleton'
+import ErrorCard from '../components/ui/ErrorCard'
 import {
   createManualTransaction,
   fetchAnalysis,
@@ -17,26 +16,55 @@ import {
 } from '../services/api'
 import { requestPasswordReset, restoreSession, signIn, signOut, signUp } from '../services/auth'
 
+const DashboardPage = lazy(() => import('./DashboardPage'))
+const Analytics = lazy(() => import('./Analytics'))
+const AIAssistant = lazy(() => import('./AIAssistant'))
+const Settings = lazy(() => import('./Settings'))
+const History = lazy(() => import('./History'))
+const BehaviorPage = lazy(() => import('./BehaviorPage'))
+const RiskPage = lazy(() => import('./RiskPage'))
+const GuidancePage = lazy(() => import('./GuidancePage'))
+
 const routeMeta = {
   dashboard: {
     eyebrow: 'CareBank Command Center',
-    title: 'From transaction history to financial decision intelligence',
-    description: 'Track financial health, surface suspicious activity, and keep the strongest signals visible the moment a user signs in.',
+    title: 'Financial Intelligence Workspace',
+    description: 'Track explainable score, behavior drift, risk intelligence, guidance, and live alerts from one command center.',
+  },
+  behavior: {
+    eyebrow: 'Behavior Intelligence',
+    title: 'Behavior Drift & Recurrence',
+    description: 'Monitor rolling spend windows, drift severity, anomalies, and recurring merchant behavior.',
+  },
+  risk: {
+    eyebrow: 'Risk Intelligence',
+    title: 'Risk Events & Recommendations',
+    description: 'Review deterministic risk events, severity, confidence, and recommended next actions.',
+  },
+  guidance: {
+    eyebrow: 'Guidance Inbox',
+    title: 'Actionable Financial Recommendations',
+    description: 'Prioritized steps mapped directly to score, behavior, and risk intelligence signals.',
+  },
+  history: {
+    eyebrow: 'History Workspace',
+    title: 'Snapshots & Event History',
+    description: 'Trace score, risk, behavior, guidance, and sanitized audit history.',
   },
   analytics: {
-    eyebrow: 'Score & Risk',
-    title: 'Explainable financial scoring and safety insights',
-    description: 'Break down savings, stability, discipline, risk, and anomaly signals with deterministic metrics that are easy to justify.',
+    eyebrow: 'Score Intelligence',
+    title: 'Explainable Scoring Deep Dive',
+    description: 'Break down savings, stability, discipline, and risk components with deterministic evidence.',
   },
   assistant: {
     eyebrow: 'Decision Lab',
-    title: 'Simulate before you spend',
-    description: 'Test a planned purchase, project the next 30 days, and combine deterministic modeling with a short AI explanation.',
+    title: 'Simulate Before You Spend',
+    description: 'Run projected impact simulations before major spending decisions.',
   },
   settings: {
     eyebrow: 'Data Controls',
-    title: 'Manage ingestion, session state, and operational setup',
-    description: 'Upload statements, review suspicious transactions, and keep the CareBank pipeline connected to your Supabase project.',
+    title: 'Ingestion & Preferences',
+    description: 'Upload transactions, manage manual entries, and control workspace preferences.',
   },
 }
 
@@ -51,6 +79,7 @@ export default function Home() {
   const [analysis, setAnalysis] = useState(null)
   const [financialScore, setFinancialScore] = useState(null)
   const [fraudCheck, setFraudCheck] = useState({ flagged_transactions: [] })
+  const [moduleErrors, setModuleErrors] = useState({ analysis: '', score: '', fraud: '' })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [authNotice, setAuthNotice] = useState('')
@@ -97,28 +126,54 @@ export default function Home() {
     setLoading(true)
     setError('')
 
-    try {
-      const [analysisData, scoreData, fraudData] = await Promise.all([
-        fetchAnalysis(accessToken),
-        fetchFinancialScore(accessToken),
-        fetchFraudCheck(accessToken),
-      ])
-      setAnalysis(analysisData)
-      setFinancialScore(scoreData)
-      setFraudCheck(fraudData)
-    } catch (nextError) {
-      if (nextError.isAuthError) {
-        await signOut(session)
-        setSession(null)
-        setAuthNotice('Your session expired while loading the dashboard. Please sign in again.')
-      }
-      setError(nextError.message || 'Unable to load dashboard data.')
+    const [analysisData, scoreData, fraudData] = await Promise.allSettled([
+      fetchAnalysis(accessToken),
+      fetchFinancialScore(accessToken),
+      fetchFraudCheck(accessToken),
+    ])
+
+    const nextErrors = { analysis: '', score: '', fraud: '' }
+
+    if (analysisData.status === 'fulfilled') {
+      setAnalysis(analysisData.value)
+    } else {
       setAnalysis(null)
-      setFinancialScore(null)
-      setFraudCheck({ flagged_transactions: [] })
-    } finally {
-      setLoading(false)
+      nextErrors.analysis = analysisData.reason?.message || 'Analysis is unavailable.'
     }
+
+    if (scoreData.status === 'fulfilled') {
+      setFinancialScore(scoreData.value)
+    } else {
+      setFinancialScore(null)
+      nextErrors.score = scoreData.reason?.message || 'Financial score is unavailable.'
+    }
+
+    if (fraudData.status === 'fulfilled') {
+      setFraudCheck(fraudData.value)
+    } else {
+      setFraudCheck({ flagged_transactions: [] })
+      nextErrors.fraud = fraudData.reason?.message || 'Fraud checks are unavailable.'
+    }
+
+    const authError = [analysisData, scoreData, fraudData]
+      .filter((item) => item.status === 'rejected')
+      .map((item) => item.reason)
+      .find((reason) => reason?.isAuthError)
+
+    if (authError) {
+      await signOut(session)
+      setSession(null)
+      setAuthNotice('Your session expired while loading the workspace. Please sign in again.')
+      setLoading(false)
+      return
+    }
+
+    setModuleErrors(nextErrors)
+    if (nextErrors.analysis && nextErrors.score && nextErrors.fraud) {
+      setError('Core workspace modules could not be loaded. Retry to continue.')
+    }
+
+    setLoading(false)
   }
 
   useEffect(() => {
@@ -126,6 +181,7 @@ export default function Home() {
       setAnalysis(null)
       setFinancialScore(null)
       setFraudCheck({ flagged_transactions: [] })
+      setModuleErrors({ analysis: '', score: '', fraud: '' })
       setLoading(false)
       return
     }
@@ -174,6 +230,14 @@ export default function Home() {
 
   const pageMeta = routeMeta[route] || routeMeta.dashboard
 
+  const moduleErrorCards = (
+    <div className="grid gap-3 lg:grid-cols-3">
+      {moduleErrors.analysis ? <ErrorCard title="Analysis module" message={moduleErrors.analysis} onRetry={() => loadWorkspace(session?.access_token)} compact /> : null}
+      {moduleErrors.score ? <ErrorCard title="Financial score module" message={moduleErrors.score} onRetry={() => loadWorkspace(session?.access_token)} compact /> : null}
+      {moduleErrors.fraud ? <ErrorCard title="Fraud module" message={moduleErrors.fraud} onRetry={() => loadWorkspace(session?.access_token)} compact /> : null}
+    </div>
+  )
+
   const pageContent = useMemo(() => {
     if (route === 'settings') {
       return (
@@ -191,22 +255,22 @@ export default function Home() {
       )
     }
 
-    if (!analysis || !financialScore) return null
+    if (route === 'history') return <History accessToken={session.access_token} />
+    if (route === 'behavior') return <BehaviorPage accessToken={session.access_token} />
+    if (route === 'risk') return <RiskPage accessToken={session.access_token} />
+    if (route === 'guidance') return <GuidancePage accessToken={session.access_token} />
 
     if (route === 'analytics') {
+      if (!analysis || !financialScore) return moduleErrorCards
       return <Analytics analysis={analysis} financialScore={financialScore} fraudCheck={fraudCheck} />
     }
 
     if (route === 'assistant') {
-      return (
-        <AIAssistant
-          analysis={analysis}
-          financialScore={financialScore}
-          fraudCheck={fraudCheck}
-          accessToken={session.access_token}
-        />
-      )
+      if (!analysis || !financialScore) return moduleErrorCards
+      return <AIAssistant analysis={analysis} financialScore={financialScore} fraudCheck={fraudCheck} accessToken={session.access_token} />
     }
+
+    if (!analysis || !financialScore) return moduleErrorCards
 
     return (
       <DashboardPage
@@ -214,9 +278,10 @@ export default function Home() {
         financialScore={financialScore}
         fraudCheck={fraudCheck}
         accessToken={session.access_token}
+        userId={session.user?.id}
       />
     )
-  }, [analysis, financialScore, fraudCheck, health, preferences, preferencesSaving, route, session, uploading, uploadState])
+  }, [analysis, financialScore, fraudCheck, preferences, preferencesSaving, route, session, uploading, uploadState, moduleErrors])
 
   const handleNavigate = (nextRoute) => {
     window.location.hash = `/${nextRoute}`
@@ -377,18 +442,18 @@ export default function Home() {
           </header>
 
           {loading ? (
-            <div className="rounded-[28px] border border-slate-200 bg-white p-10 text-center text-slate-500 shadow-xl">
-              Loading CareBank insights...
-            </div>
+            <LoadingSkeleton lines={8} />
           ) : error ? (
-            <div className="rounded-[28px] border border-rose-200 bg-rose-50 p-10 text-center text-rose-700 shadow-xl">
-              {error}
-            </div>
+            <ErrorCard title="Workspace unavailable" message={error} onRetry={() => loadWorkspace(session?.access_token)} />
           ) : (
-            pageContent
+            <Suspense fallback={<LoadingSkeleton lines={8} />}>
+              {pageContent}
+            </Suspense>
           )}
         </section>
       </div>
+
+      <Chat accessToken={session.access_token} />
     </main>
   )
 }

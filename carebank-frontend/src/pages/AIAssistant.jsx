@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import Chat from '../components/Chat'
 import { SectionCard } from '../components/Cards'
 import { simulateDecision } from '../services/api'
 
@@ -158,8 +157,6 @@ export default function AIAssistant({ analysis, financialScore, fraudCheck, acce
           </div>
         </div>
       </SectionCard>
-
-      <Chat accessToken={accessToken} />
     </div>
   )
 }
