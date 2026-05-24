@@ -1,4 +1,9 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const ENV_API_URL = import.meta.env.VITE_API_URL?.trim()
+const API_BASE_URL = import.meta.env.DEV
+  ? ENV_API_URL && /^(https?:\/\/)?(localhost|127\.0\.0\.1)(:\d+)?(\/.*)?$/i.test(ENV_API_URL)
+    ? ENV_API_URL
+    : 'http://127.0.0.1:8000'
+  : ENV_API_URL || 'http://localhost:8000'
 const DEFAULT_TIMEOUT_MS = 15000
 
 function mapSafeErrorMessage(status) {
