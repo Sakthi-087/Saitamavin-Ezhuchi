@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { connectRealtime } from '../services/api'
+import { connectRealtime, requestRealtimeTicket } from '../services/api'
 
 const MAX_EVENTS = 50
 
@@ -69,10 +69,14 @@ export default function useRealtimeAlerts({ userId, accessToken, enabled = true 
       }, delayMs)
     }
 
-    const openSocket = () => {
+    const openSocket = async () => {
       try {
         setConnectionStatus(attemptsRef.current ? 'reconnecting' : 'connecting')
-        socketRef.current = connectRealtime(userId, accessToken, {
+        const { ticket } = await requestRealtimeTicket(accessToken)
+        if (stopped) {
+          return
+        }
+        socketRef.current = connectRealtime(userId, ticket, {
           onOpen: () => {
             attemptsRef.current = 0
             setConnectionStatus('connected')

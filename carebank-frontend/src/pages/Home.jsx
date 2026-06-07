@@ -4,6 +4,7 @@ import Sidebar from '../components/Sidebar'
 import Chat from '../components/Chat'
 import LoadingSkeleton from '../components/ui/LoadingSkeleton'
 import ErrorCard from '../components/ui/ErrorCard'
+import StatusBadge from '../components/ui/StatusBadge'
 import {
   createManualTransaction,
   fetchAnalysis,
@@ -28,8 +29,8 @@ const GuidancePage = lazy(() => import('./GuidancePage'))
 const routeMeta = {
   dashboard: {
     eyebrow: 'CareBank Command Center',
-    title: 'Financial Intelligence Workspace',
-    description: 'Track explainable score, behavior drift, risk intelligence, guidance, and live alerts from one command center.',
+    title: 'Executive Overview',
+    description: 'A single-screen summary of financial health, risk posture, guidance, and live alerts.',
   },
   behavior: {
     eyebrow: 'Behavior Intelligence',
@@ -229,6 +230,11 @@ export default function Home() {
   }, [session?.access_token])
 
   const pageMeta = routeMeta[route] || routeMeta.dashboard
+  const workspaceHealthTone = health?.status === 'ok' ? 'good' : health?.status ? 'warning' : 'neutral'
+
+  const handleNavigate = (nextRoute) => {
+    window.location.hash = `/${nextRoute}`
+  }
 
   const moduleErrorCards = (
     <div className="grid gap-3 lg:grid-cols-3">
@@ -279,13 +285,10 @@ export default function Home() {
         fraudCheck={fraudCheck}
         accessToken={session.access_token}
         userId={session.user?.id}
+        onNavigate={handleNavigate}
       />
     )
   }, [analysis, financialScore, fraudCheck, preferences, preferencesSaving, route, session, uploading, uploadState, moduleErrors])
-
-  const handleNavigate = (nextRoute) => {
-    window.location.hash = `/${nextRoute}`
-  }
 
   async function handleSignIn(email, password) {
     const nextSession = await signIn(email, password)
@@ -413,29 +416,32 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-app-shell px-4 py-6 text-slate-900 sm:px-6 lg:px-8">
-      <div className="mx-auto grid max-w-7xl gap-6 xl:grid-cols-[290px_1fr]">
+      <div className="mx-auto grid max-w-[1520px] gap-6 xl:grid-cols-[296px_1fr]">
         <Sidebar activeRoute={route} onNavigate={handleNavigate} session={session} onSignOut={handleSignOut} />
 
         <section className="space-y-6">
-          <header className="overflow-hidden rounded-[28px] border border-slate-200/70 bg-hero-gradient p-6 text-white shadow-2xl shadow-sky-900/10">
+          <header className="overflow-hidden rounded-[32px] border border-white/70 bg-hero-gradient p-6 text-white shadow-[0_24px_70px_rgba(15,23,42,0.16)]">
             <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
               <div className="max-w-3xl">
-                <p className="text-sm font-semibold uppercase tracking-[0.24em] text-cyan-100">{pageMeta.eyebrow}</p>
-                <h1 className="mt-3 text-3xl font-bold leading-tight lg:text-[2.4rem]">{pageMeta.title}</h1>
-                <p className="mt-3 text-sm leading-7 text-blue-50">{pageMeta.description}</p>
+                <div className="flex flex-wrap items-center gap-3">
+                  <p className="text-sm font-semibold uppercase tracking-[0.24em] text-cyan-100">{pageMeta.eyebrow}</p>
+                  <StatusBadge label={health?.status || 'checking'} tone={workspaceHealthTone} />
+                </div>
+                <h1 className="mt-3 text-3xl font-semibold leading-tight tracking-tight lg:text-[2.75rem]">{pageMeta.title}</h1>
+                <p className="mt-3 max-w-2xl text-sm leading-7 text-blue-50">{pageMeta.description}</p>
               </div>
               <div className="grid gap-3 sm:grid-cols-3">
-                <div className="rounded-2xl border border-white/20 bg-white/10 px-4 py-3 backdrop-blur">
-                  <p className="text-xs uppercase tracking-[0.2em] text-cyan-100">Score</p>
-                  <p className="mt-1 text-2xl font-bold">{financialScore?.score ?? '--'}</p>
+                <div className="rounded-[24px] border border-white/20 bg-white/10 px-4 py-4 backdrop-blur">
+                  <p className="text-xs uppercase tracking-[0.22em] text-cyan-100">Score</p>
+                  <p className="mt-2 text-2xl font-semibold">{financialScore?.score ?? '--'}</p>
                 </div>
-                <div className="rounded-2xl border border-white/20 bg-white/10 px-4 py-3 backdrop-blur">
-                  <p className="text-xs uppercase tracking-[0.2em] text-cyan-100">Status</p>
-                  <p className="mt-1 text-2xl font-bold">{financialScore?.status || '--'}</p>
+                <div className="rounded-[24px] border border-white/20 bg-white/10 px-4 py-4 backdrop-blur">
+                  <p className="text-xs uppercase tracking-[0.22em] text-cyan-100">Status</p>
+                  <p className="mt-2 text-2xl font-semibold">{financialScore?.status || '--'}</p>
                 </div>
-                <div className="rounded-2xl border border-white/20 bg-white/10 px-4 py-3 backdrop-blur">
-                  <p className="text-xs uppercase tracking-[0.2em] text-cyan-100">Fraud flags</p>
-                  <p className="mt-1 text-2xl font-bold">{fraudCheck?.flagged_transactions?.length ?? 0}</p>
+                <div className="rounded-[24px] border border-white/20 bg-white/10 px-4 py-4 backdrop-blur">
+                  <p className="text-xs uppercase tracking-[0.22em] text-cyan-100">Fraud flags</p>
+                  <p className="mt-2 text-2xl font-semibold">{fraudCheck?.flagged_transactions?.length ?? 0}</p>
                 </div>
               </div>
             </div>

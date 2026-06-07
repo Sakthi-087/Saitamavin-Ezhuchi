@@ -3,10 +3,9 @@ node_modules/
 dist/
 __pycache__/
 *.pyc
+*.log
 .env
 carebank-frontend/.env
-carebank-backend/data/snapshots/
-carebank-backend/data/*.json
-carebank-backend/data/*.jsonl
+carebank-backend/data/
 carebank-backend/.pytest_cache/
 carebank-frontend/dist/

@@ -1,4 +1,5 @@
 import EmptyState from './ui/EmptyState'
+import { TimelineDot } from './Cards'
 
 function safeSummary(item, type) {
   if (type === 'score') return `Score ${item.score ?? '--'} (${item.status || 'N/A'})`
@@ -15,9 +16,12 @@ export default function HistoryTimeline({ items, type }) {
   return (
     <div className="space-y-3">
       {items.map((item, idx) => (
-        <div key={item.id || item.event_id || idx} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <p className="text-xs text-slate-500">{new Date(item.created_at || item.generated_at || Date.now()).toLocaleString()}</p>
-          <p className="mt-1 font-semibold text-slate-900">{safeSummary(item, type)}</p>
+        <div key={item.id || item.event_id || idx} className="flex gap-4 rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-sm">
+          <TimelineDot tone={type === 'risk' ? 'danger' : type === 'guidance' ? 'info' : 'neutral'} />
+          <div className="min-w-0 flex-1">
+            <p className="text-xs uppercase tracking-[0.22em] text-slate-500">{new Date(item.created_at || item.generated_at || Date.now()).toLocaleString()}</p>
+            <p className="mt-2 font-semibold text-slate-950">{safeSummary(item, type)}</p>
+          </div>
         </div>
       ))}
     </div>

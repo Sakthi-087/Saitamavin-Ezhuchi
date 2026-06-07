@@ -10,6 +10,7 @@ import { SectionCard } from '../components/Cards'
 import LoadingSkeleton from '../components/ui/LoadingSkeleton'
 import ErrorCard from '../components/ui/ErrorCard'
 import HistoryTimeline from '../components/HistoryTimeline'
+import StatusBadge from '../components/ui/StatusBadge'
 
 const tabs = [
   { key: 'score', label: 'Score History' },
@@ -67,14 +68,18 @@ export default function History({ accessToken }) {
   if (state.loading) return <LoadingSkeleton lines={7} />
 
   return (
-    <SectionCard title="History Workspace" subtitle="Snapshot and event history across score, risk, guidance, behavior, and audit trails">
+    <SectionCard
+      title="History Workspace"
+      subtitle="Snapshot and event history across score, risk, guidance, behavior, and audit trails"
+      action={<StatusBadge label="Auditable timeline" tone="info" />}
+    >
       <div className="mb-4 flex flex-wrap gap-2">
         {tabs.map((tab) => (
           <button
             key={tab.key}
             type="button"
             onClick={() => setActiveTab(tab.key)}
-            className={`rounded-xl px-3 py-2 text-sm font-semibold ${activeTab === tab.key ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+            className={`rounded-full px-4 py-2 text-sm font-semibold ${activeTab === tab.key ? 'bg-slate-950 text-white shadow-sm' : 'border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'}`}
           >
             {tab.label}
           </button>
@@ -83,7 +88,7 @@ export default function History({ accessToken }) {
 
       {state.error ? <ErrorCard title="Some history sources failed" message={state.error} onRetry={load} compact /> : null}
 
-      <div className="mt-3">
+      <div className="mt-4">
         <HistoryTimeline items={activeData} type={activeTab} />
       </div>
     </SectionCard>

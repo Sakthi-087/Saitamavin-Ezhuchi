@@ -1,129 +1,259 @@
-import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
-import { KpiCard, SectionCard } from './Cards'
+import { KpiCard, SectionCard, SectionEyebrow, TimelineDot } from './Cards'
+import StatusBadge from './ui/StatusBadge'
+import EmptyState from './ui/EmptyState'
+import RealtimeAlertCenter from './RealtimeAlertCenter'
 
-const colors = ['#0891b2', '#2563eb', '#f59e0b', '#ef4444']
-const alertStyles = ['border-amber-200 bg-amber-50 text-amber-800', 'border-yellow-200 bg-yellow-50 text-yellow-800', 'border-rose-200 bg-rose-50 text-rose-800']
-
-function RiskPill({ risk }) {
-  const styles = {
-    High: 'border-rose-200 bg-rose-50 text-rose-700',
-    Medium: 'border-amber-200 bg-amber-50 text-amber-700',
-    Low: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-  }
-
-  return <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${styles[risk] || styles.Low}`}>{risk}</span>
+function formatMoney(value) {
+  return `Rs ${Number(value ?? 0).toLocaleString('en-IN')}`
 }
 
-export default function Dashboard({ analysis, financialScore, fraudCheck }) {
+function getTopValue(list, fallback = 'N/A') {
+  if (!Array.isArray(list) || !list.length) return fallback
+  return String(list[0])
+}
+
+function dispatchCopilotPrompt(prompt) {
+  window.dispatchEvent(new CustomEvent('carebank:open-copilot', { detail: { prompt } }))
+}
+
+function SummaryRow({ label, value, tone = 'neutral', badgeLabel }) {
+  return (
+    <div className="rounded-[22px] border border-slate-200/80 bg-slate-50/80 p-4 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">{label}</p>
+      <div className="mt-3 flex items-center justify-between gap-3">
+        <p className="text-base font-semibold text-slate-950">{value}</p>
+        <StatusBadge label={badgeLabel || label} tone={tone === 'neutral' ? 'neutral' : tone} />
+      </div>
+    </div>
+  )
+}
+
+export default function Dashboard({
+  analysis,
+  financialScore,
+  fraudCheck,
+  riskSummary,
+  guidanceSummary,
+  realtimeConnectionStatus,
+  realtimeAlerts,
+  realtimeAlertCount,
+  onDismissAlert,
+  onNavigate,
+}) {
   const flaggedTransactions = fraudCheck?.flagged_transactions || []
-  const topFlags = flaggedTransactions.slice(0, 3)
+  const scoreValue = Number(financialScore?.score ?? 0)
+  const riskValue = Number(riskSummary?.overall_risk_score ?? financialScore?.breakdown?.risk_score ?? 0)
+  const monthlySpend = Number(analysis?.spending?.total ?? 0)
+  const savingsRatio = Number(financialScore?.metrics?.savings_ratio ?? 0) * 100
+
+  const topStrength = getTopValue(financialScore?.positive_signals, 'Stable spending discipline')
+  const topRisk = getTopValue(financialScore?.major_issues, 'No major risks surfaced')
+  const topRecommendation = getTopValue(analysis?.recommendations, 'Continue tracking spending patterns')
+  const riskEvents = Array.isArray(riskSummary?.risk_events) ? riskSummary.risk_events.slice(0, 3) : []
+  const guidanceItems = Array.isArray(guidanceSummary?.items || guidanceSummary?.guidance_items)
+    ? (guidanceSummary?.items || guidanceSummary?.guidance_items).slice(0, 3)
+    : []
+
+  const copilotPrompts = [
+    'Why is my risk high?',
+    'How can I improve my score?',
+    'What should I cut this month?',
+  ]
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
-        {analysis.kpis.map((item) => (
-          <KpiCard key={item.title} item={item} />
-        ))}
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <KpiCard
+          item={{
+            title: 'Financial Health Score',
+            value: scoreValue,
+            subtitle: financialScore?.status || 'Status unavailable',
+            tone: scoreValue >= 80 ? 'good' : scoreValue >= 60 ? 'warning' : 'danger',
+            icon: 'FH',
+            trend: financialScore?.scoring_version || 'Deterministic',
+          }}
+        />
+        <KpiCard
+          item={{
+            title: 'Risk Score',
+            value: riskValue,
+            subtitle: riskSummary?.risk_level || financialScore?.breakdown?.risk_score?.toFixed?.(0) || 'Review risk posture',
+            tone: riskValue >= 75 ? 'danger' : riskValue >= 50 ? 'warning' : 'good',
+            icon: 'RS',
+            trend: `${riskEvents.length} visible events`,
+          }}
+        />
+        <KpiCard
+          item={{
+            title: 'Monthly Spend',
+            value: formatMoney(monthlySpend),
+            subtitle: analysis?.insights?.current_month || 'Current month',
+            tone: monthlySpend > 0 ? 'info' : 'neutral',
+            icon: 'MS',
+            trend: flaggedTransactions.length ? `${flaggedTransactions.length} flagged` : 'No flagged spend',
+          }}
+        />
+        <KpiCard
+          item={{
+            title: 'Savings Ratio',
+            value: `${savingsRatio.toFixed(0)}%`,
+            subtitle: 'Share retained after spending',
+            tone: savingsRatio >= 25 ? 'good' : savingsRatio >= 15 ? 'warning' : 'danger',
+            icon: 'SR',
+            trend: savingsRatio >= 25 ? 'Healthy buffer' : 'Watch savings',
+          }}
+        />
+      </section>
+
+      <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+        <SectionCard
+          title="Financial Health Summary"
+          subtitle="A single-glance read on score, status, strengths, risks, and the strongest recommendation."
+          action={<StatusBadge label={financialScore?.status || 'Unknown'} tone={scoreValue >= 80 ? 'good' : scoreValue >= 60 ? 'warning' : 'danger'} />}
+        >
+          <div className="grid gap-4 md:grid-cols-[0.9fr_1.1fr]">
+            <div className="rounded-[28px] border border-slate-200/80 bg-slate-950 p-6 text-white shadow-[0_20px_45px_rgba(15,23,42,0.16)]">
+              <SectionEyebrow>Score</SectionEyebrow>
+              <p className="mt-4 text-6xl font-semibold tracking-tight">{scoreValue}</p>
+              <p className="mt-3 text-sm uppercase tracking-[0.22em] text-cyan-200">{financialScore?.status || 'Unknown'}</p>
+              <p className="mt-4 text-sm leading-7 text-slate-200">{analysis?.financial_health?.summary || financialScore?.summary || 'Executive financial summary anchored to deterministic scoring.'}</p>
+            </div>
+
+            <div className="grid gap-3">
+              <SummaryRow label="Top strength" value={topStrength} tone="good" badgeLabel="Positive" />
+              <SummaryRow label="Top risk" value={topRisk} tone="danger" badgeLabel="Attention" />
+              <SummaryRow label="Top recommendation" value={topRecommendation} tone="info" badgeLabel="Focus" />
+              <div className="rounded-[22px] border border-slate-200/80 bg-slate-50/80 p-4 shadow-sm">
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">What this means</p>
+                <p className="mt-3 text-sm leading-7 text-slate-700">
+                  {scoreValue >= 80
+                    ? 'The profile is healthy and consistent. Keep the current discipline and watch for outliers.'
+                    : scoreValue >= 60
+                      ? 'The profile is usable but mixed. A few focused changes can materially improve the score.'
+                      : 'The profile needs attention. Small reductions in volatile spending will likely have the greatest impact.'}
+                </p>
+              </div>
+            </div>
+          </div>
+        </SectionCard>
+
+        <SectionCard
+          title="Risk Summary"
+          subtitle="Only the executive-level risk posture is shown here. Deep analysis lives on the Risk page."
+          action={<StatusBadge label={riskSummary?.risk_level || 'Low'} tone={riskValue >= 75 ? 'danger' : riskValue >= 50 ? 'warning' : 'good'} />}
+        >
+          <div className="space-y-4">
+            <div className="rounded-[28px] border border-slate-200/80 bg-gradient-to-br from-slate-50 to-white p-5 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Overall risk score</p>
+                  <p className="mt-3 text-5xl font-semibold text-slate-950">{riskValue.toFixed(1)}</p>
+                </div>
+                <StatusBadge label={riskSummary?.risk_level || 'Low'} tone={riskValue >= 75 ? 'danger' : riskValue >= 50 ? 'warning' : 'good'} />
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {riskEvents.length ? (
+                riskEvents.map((event, index) => (
+                  <div key={event.risk_event_id || `${event.event_type}-${index}`} className="flex gap-3 rounded-[22px] border border-slate-200/80 bg-white p-4 shadow-sm">
+                    <TimelineDot tone={index === 0 ? 'danger' : index === 1 ? 'warning' : 'info'} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="font-semibold text-slate-950">{event.event_type || event.risk_type || 'Risk event'}</p>
+                        <StatusBadge label={event.severity || 'Low'} tone={event.severity?.toLowerCase?.().includes('high') ? 'danger' : event.severity?.toLowerCase?.().includes('medium') ? 'warning' : 'info'} />
+                      </div>
+                      <p className="mt-2 text-sm leading-6 text-slate-600">{event.recommendation || event.recommendation_text || 'No recommendation provided.'}</p>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <EmptyState title="No risk events available" description="Risk intelligence will appear here once events are emitted." />
+              )}
+            </div>
+          </div>
+        </SectionCard>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
-        <SectionCard title="Score Snapshot" subtitle="Deterministic financial health driven by explainable signals">
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="rounded-3xl bg-slate-900 p-6 text-white">
-              <p className="text-sm uppercase tracking-[0.2em] text-cyan-200">Financial score</p>
-              <p className="mt-3 text-5xl font-bold">{financialScore.score}</p>
-              <p className="mt-3 text-sm text-slate-200">{financialScore.status} outlook based on current behavior.</p>
-            </div>
-            <div className="grid gap-3">
-              {Object.entries(financialScore.breakdown).map(([key, value]) => (
-                <div key={key} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-semibold capitalize text-slate-900">{key.replace('_', ' ')}</p>
-                    <span className="text-lg font-bold text-slate-900">{value}</span>
-                  </div>
-                  <div className="mt-3 h-2 rounded-full bg-slate-200">
-                    <div className="h-2 rounded-full bg-gradient-to-r from-cyan-500 to-blue-600" style={{ width: `${value}%` }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </SectionCard>
-
-        <SectionCard title="Fraud Safety Layer" subtitle="Recent suspicious transactions flagged from behavior anomalies">
-          {topFlags.length ? (
-            <div className="space-y-3">
-              {topFlags.map((item) => (
-                <div key={`${item.description}-${item.amount}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+        <SectionCard
+          title="Guidance Summary"
+          subtitle="Only the top 3 recommendations are surfaced here. Open the Guidance page for the full inbox."
+          action={
+            <button
+              type="button"
+              onClick={() => onNavigate?.('guidance')}
+              className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-400 hover:bg-slate-50"
+            >
+              View All Guidance
+            </button>
+          }
+        >
+          <div className="space-y-3">
+            {guidanceItems.length ? (
+              guidanceItems.map((item, index) => (
+                <div key={item.guidance_id || `${item.title}-${index}`} className="rounded-[22px] border border-slate-200/80 bg-slate-50/80 p-4 shadow-sm">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="font-semibold text-slate-900">{item.description}</p>
-                      <p className="mt-1 text-sm text-slate-500">Rs {Number(item.amount).toLocaleString('en-IN')}</p>
+                      <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">{item.priority || 'Low'} priority</p>
+                      <p className="mt-2 font-semibold text-slate-950">{item.title || item.guidance_type || 'Guidance item'}</p>
                     </div>
-                    <RiskPill risk={item.risk} />
+                    <StatusBadge label={`TTL ${item.ttl_days ?? 'N/A'}d`} tone="neutral" />
                   </div>
-                  <p className="mt-3 text-sm text-slate-600">{item.flags.join(', ')}</p>
+                  <p className="mt-3 text-sm leading-7 text-slate-600">{item.rationale || 'No rationale provided.'}</p>
                 </div>
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-6 text-sm text-emerald-800">
-              No medium or high risk transactions are currently flagged.
-            </div>
-          )}
-        </SectionCard>
-      </div>
-
-      <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-        <SectionCard title="Spending Breakdown" subtitle="Current month category distribution">
-          <div className="grid gap-6 lg:grid-cols-[1fr_0.9fr]">
-            <div className="h-80">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={analysis.chart_data} dataKey="value" nameKey="name" innerRadius={65} outerRadius={110} paddingAngle={4} isAnimationActive>
-                    {analysis.chart_data.map((entry, index) => (
-                      <Cell key={entry.name} fill={colors[index % colors.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(value) => `Rs ${Number(value).toLocaleString('en-IN')}`} />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-
-            <div className="space-y-3">
-              {analysis.chart_data.map((item, index) => (
-                <div key={item.name} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <span className="h-3 w-3 rounded-full" style={{ backgroundColor: colors[index % colors.length] }} />
-                      <p className="font-semibold text-slate-900">{item.name}</p>
-                    </div>
-                    <p className="text-sm font-medium text-slate-600">{item.change >= 0 ? '+' : ''}{item.change}%</p>
-                  </div>
-                  <p className="mt-2 text-sm text-slate-500">Rs {item.value.toLocaleString('en-IN')} this month</p>
-                </div>
-              ))}
-            </div>
+              ))
+            ) : (
+              <EmptyState title="No guidance items" description="Guidance will appear when behavior or risk signals are generated." />
+            )}
           </div>
         </SectionCard>
 
-        <SectionCard title="Alerts Panel" subtitle="Operational signals generated from the analysis pipeline">
-          <div className="space-y-4">
-            {analysis.alerts.map((alert, index) => (
-              <div key={alert} className={`rounded-2xl border p-4 ${alertStyles[index % alertStyles.length]}`}>
-                <div className="flex items-center justify-between gap-3">
-                  <p className="font-semibold">Alert: {alert}</p>
-                  <span className="text-xs font-semibold uppercase tracking-wide">Live</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </SectionCard>
+        <RealtimeAlertCenter
+          connectionStatus={realtimeConnectionStatus}
+          liveEvents={realtimeAlerts || []}
+          onDismiss={onDismissAlert}
+        />
       </div>
 
-      <SectionCard title="AI Explanation" subtitle="Human-readable summary grounded in the structured analysis">
-        <div className="rounded-3xl bg-slate-50 p-5 text-sm leading-7 text-slate-700">{analysis.ai_explanation}</div>
+      <SectionCard
+        title="Copilot Quick Ask"
+        subtitle="Fast prompts for executives who want a one-screen answer without leaving the dashboard."
+        action={<StatusBadge label="Quick ask" tone="info" />}
+      >
+        <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+          <div className="rounded-[28px] border border-slate-200/80 bg-slate-950 p-6 text-white shadow-[0_20px_45px_rgba(15,23,42,0.16)]">
+            <SectionEyebrow>Ask copilot</SectionEyebrow>
+            <p className="mt-4 text-2xl font-semibold">Open the assistant with a pre-framed question.</p>
+            <p className="mt-3 text-sm leading-7 text-slate-200">Useful when you want a reasoned answer without jumping into deep analytics pages.</p>
+            <div className="mt-6 flex flex-wrap gap-2">
+              <StatusBadge label={realtimeConnectionStatus || 'connected'} tone={realtimeConnectionStatus === 'connected' ? 'good' : 'warning'} />
+              <StatusBadge label={`${realtimeAlertCount || 0} alerts`} tone="info" />
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex flex-wrap gap-2">
+              {copilotPrompts.map((prompt) => (
+                <button
+                  key={prompt}
+                  type="button"
+                  onClick={() => dispatchCopilotPrompt(prompt)}
+                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:border-blue-200 hover:bg-blue-50"
+                >
+                  {prompt}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => dispatchCopilotPrompt('Explain my score and risk in plain language')}
+              className="w-full rounded-[22px] bg-slate-950 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-900/10 hover:bg-slate-900"
+            >
+              Open Copilot
+            </button>
+          </div>
+        </div>
       </SectionCard>
     </div>
   )

@@ -15,6 +15,16 @@ security = HTTPBearer(auto_error=False)
 logger = logging.getLogger(__name__)
 audit_logger = SecurityAuditLogger()
 auth_validator = AuthValidator()
+DEV_AUTH_PREFIX = "carebank-dev:"
+
+
+def _dev_user_from_token(token: str) -> UserContext | None:
+    if not token.startswith(DEV_AUTH_PREFIX):
+        return None
+
+    email = token[len(DEV_AUTH_PREFIX) :].strip() or "demo@carebank.local"
+    safe_id = f"dev_{''.join(ch if ch.isalnum() else '_' for ch in email.lower()).strip('_') or 'user'}"
+    return UserContext(id=safe_id, email=email)
 
 
 async def get_current_user(
@@ -26,6 +36,12 @@ async def get_current_user(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token.")
 
     logger.info("Received bearer token for auth verification.")
+    if settings.enable_sample_data_fallback and not settings.is_production:
+        dev_user = _dev_user_from_token(credentials.credentials)
+        if dev_user is not None:
+            logger.info("Using development auth fallback for user_id=%s email=%s", dev_user.id, dev_user.email)
+            return dev_user
+
     if not auth_validator.prevalidate(credentials.credentials):
         audit_logger.log_auth_failure("prevalidation_failed")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid bearer token.")

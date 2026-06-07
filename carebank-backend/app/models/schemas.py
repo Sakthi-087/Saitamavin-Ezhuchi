@@ -387,3 +387,9 @@ class LiveAlertEvent(BaseModel):
     delivery_status: str = "created"
     payload: dict[str, Any] = Field(default_factory=dict)
     created_at: str
+
+
+class RealtimeTicketResponse(BaseModel):
+    ticket: str
+    expires_in: int
+    expires_at: str

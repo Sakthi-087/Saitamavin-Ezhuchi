@@ -7,12 +7,14 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from app.core.auth import get_current_user
+from app.core.config import Settings
 from app.main import app
 from app.models.schemas import SystemEvent, Transaction, UserContext
 from app.services.event_bus import InMemoryEventBus
 from app.services.idempotency_store import IdempotencyStore
 from app.services.realtime_manager import RealtimeManager
 from app.services.realtime_pipeline import RealtimePipeline
+from app.services.ws_ticket_store import WsTicketStore
 
 
 def _event(event_type: str = "transaction_ingested") -> SystemEvent:
@@ -105,6 +107,20 @@ class TestRealtimeCore(unittest.IsolatedAsyncioTestCase):
         await manager.send_to_user("u1", {"hello": "world", "authorization": "Bearer secret"})
         self.assertEqual(ws.sent[0]["authorization"], "***REDACTED***")
 
+    async def test_ws_ticket_store_issues_and_consumes_once(self):
+        store = WsTicketStore(ttl_seconds=60)
+        ticket = store.issue("u1")
+        self.assertTrue(ticket.ticket)
+        self.assertEqual(store.consume(ticket.ticket, "u1").user_id, "u1")
+        self.assertIsNone(store.consume(ticket.ticket, "u1"))
+
+    async def test_ws_ticket_store_rejects_user_mismatch_and_expiry(self):
+        store = WsTicketStore(ttl_seconds=1)
+        ticket = store.issue("u1")
+        self.assertIsNone(store.consume(ticket.ticket, "u2"))
+        store._tickets[ticket.ticket] = ("u1", datetime.now(UTC) - timedelta(seconds=1))
+        self.assertIsNone(store.consume(ticket.ticket, "u1"))
+
 
 class TestRealtimeRoutes(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
@@ -119,8 +135,41 @@ class TestRealtimeRoutes(unittest.IsolatedAsyncioTestCase):
             with self.client.websocket_connect("/ws/u1"):
                 pass
 
-    async def test_websocket_user_mismatch_rejected(self):
-        with patch("app.services.supabase.SupabaseService.verify_access_token", new=AsyncMock(return_value=UserContext(id="u2", email="u2@example.com"))):
+    async def test_websocket_ticket_issued_and_consumed(self):
+        response = self.client.post("/realtime/ws-ticket", headers={"Authorization": "Bearer t"})
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        ticket = payload["ticket"]
+        self.assertLessEqual(payload["expires_in"], 60)
+        self.assertTrue(payload["expires_at"])
+
+        with self.client.websocket_connect(f"/ws/u1?ticket={ticket}") as websocket:
+            websocket.send_text("ping")
+
+        with self.assertRaises(WebSocketDisconnect):
+            with self.client.websocket_connect(f"/ws/u1?ticket={ticket}"):
+                pass
+
+    async def test_websocket_ticket_user_mismatch_rejected(self):
+        response = self.client.post("/realtime/ws-ticket", headers={"Authorization": "Bearer t"})
+        ticket = response.json()["ticket"]
+        with self.assertRaises(WebSocketDisconnect):
+            with self.client.websocket_connect(f"/ws/u2?ticket={ticket}"):
+                pass
+
+    async def test_websocket_missing_ticket_rejected_in_production(self):
+        production_settings = Settings()
+        production_settings.app_env = "production"
+        production_settings.enable_websocket_dev_fallback = False
+        production_settings.enable_sample_data_fallback = False
+        production_settings.enable_local_event_fallback = False
+        production_settings.enable_audit_persistence = True
+        production_settings.supabase_url = "https://x.supabase.co"
+        production_settings.supabase_anon_key = "anon"
+        production_settings.supabase_service_role_key = "service"
+        production_settings.internal_metrics_token = "token"
+        production_settings.frontend_url = "https://app.example.com"
+        with patch("app.routes.realtime.get_settings", return_value=production_settings):
             with self.assertRaises(WebSocketDisconnect):
                 with self.client.websocket_connect("/ws/u1?token=fake"):
                     pass

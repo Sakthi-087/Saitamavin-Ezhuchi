@@ -35,6 +35,13 @@ class Settings:
         }
         self.ai_categorization_model = os.getenv("AI_CATEGORIZATION_MODEL", "google/gemini-2.5-flash-lite").strip() or "google/gemini-2.5-flash-lite"
         self.preferences_path = root / "data" / "preferences.json"
+        audit_default = "true" if self.app_env == "production" else "false"
+        self.enable_audit_persistence = os.getenv("ENABLE_AUDIT_PERSISTENCE", audit_default).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         self.enable_sample_data_fallback = os.getenv("ENABLE_SAMPLE_DATA_FALLBACK", "").strip().lower() in {
             "1",
             "true",
@@ -42,12 +49,6 @@ class Settings:
             "on",
         }
         self.enable_local_event_fallback = os.getenv("ENABLE_LOCAL_EVENT_FALLBACK", "").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
-        self.enable_audit_persistence = os.getenv("ENABLE_AUDIT_PERSISTENCE", "").strip().lower() in {
             "1",
             "true",
             "yes",

@@ -16,6 +16,16 @@ from app.services.categorization_service import CategorizationService
 from app.services.transaction_utils import normalize_transaction
 
 logger = logging.getLogger(__name__)
+DEV_AUTH_PREFIX = "carebank-dev:"
+
+
+def _dev_email_from_token(token: str) -> str:
+    if token.startswith(DEV_AUTH_PREFIX):
+        value = token[len(DEV_AUTH_PREFIX) :].strip()
+        if value.startswith("refresh:"):
+            value = value[len("refresh:") :].strip()
+        return value or "demo@carebank.local"
+    return ""
 
 
 class SupabaseService:
@@ -28,6 +38,11 @@ class SupabaseService:
         )
 
     async def verify_access_token(self, access_token: str) -> UserContext:
+        if self.settings.enable_sample_data_fallback and not self.settings.is_production and access_token.startswith(DEV_AUTH_PREFIX):
+            email = _dev_email_from_token(access_token)
+            safe_id = f"dev_{''.join(ch if ch.isalnum() else '_' for ch in email.lower()).strip('_') or 'user'}"
+            return UserContext(id=safe_id, email=email)
+
         try:
             async with httpx.AsyncClient(timeout=20.0) as client:
                 response = await client.get(
@@ -67,6 +82,10 @@ class SupabaseService:
         return transactions
 
     async def fetch_transaction_history(self, access_token: str) -> list[dict[str, object]]:
+        if self.settings.enable_sample_data_fallback and not self.settings.is_production and access_token.startswith(DEV_AUTH_PREFIX):
+            logger.info("Using sample transactions for development auth session.")
+            return self._load_sample_transactions()
+
         try:
             async with httpx.AsyncClient(timeout=20.0) as client:
                 response = await client.get(
@@ -96,6 +115,10 @@ class SupabaseService:
     async def insert_transactions(self, access_token: str, rows: list[dict[str, object]]) -> int:
         if not rows:
             return 0
+
+        if self.settings.enable_sample_data_fallback and not self.settings.is_production and access_token.startswith(DEV_AUTH_PREFIX):
+            logger.info("Skipping remote transaction insert for development auth session.")
+            return len(rows)
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(

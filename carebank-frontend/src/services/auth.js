@@ -1,4 +1,52 @@
 const storageKey = 'carebank.supabase.session'
+const devAuthPrefix = 'carebank-dev:'
+
+function isDevAuthSession(session) {
+  return typeof session?.access_token === 'string' && session.access_token.startsWith(devAuthPrefix)
+}
+
+function normalizeEmail(email) {
+  return (email || '').trim().toLowerCase()
+}
+
+function devSessionFor(email) {
+  const normalizedEmail = normalizeEmail(email) || 'demo@carebank.local'
+  const safeId = `dev_${normalizedEmail.replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '') || 'user'}`
+  return {
+    access_token: `${devAuthPrefix}${normalizedEmail}`,
+    refresh_token: `${devAuthPrefix}refresh:${normalizedEmail}`,
+    user: {
+      id: safeId,
+      email: normalizedEmail,
+    },
+  }
+}
+
+function isLikelySupabaseAuthFailure(error) {
+  const message = String(error?.message || '').toLowerCase()
+  return error?.status === 401 || error?.status === 403 || message.includes('invalid api key') || message.includes('supabase request failed')
+}
+
+function shouldUseDevelopmentFallback(error) {
+  if (!import.meta.env.DEV) {
+    return false
+  }
+
+  if (isLikelySupabaseAuthFailure(error)) {
+    return true
+  }
+
+  const message = String(error?.message || '').toLowerCase()
+  return (
+    error?.isNetworkError ||
+    error?.isTimeoutError ||
+    message.includes('missing vite_supabase_url') ||
+    message.includes('missing vite_supabase_anon_key') ||
+    message.includes('failed to fetch') ||
+    message.includes('network connection failed') ||
+    message.includes('supabase request failed')
+  )
+}
 
 function getSupabaseConfig() {
   const url = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/$/, '')
@@ -9,6 +57,14 @@ function getSupabaseConfig() {
   }
 
   return { url, anonKey }
+}
+
+function shouldUseLocalDevelopmentAuth() {
+  if (!import.meta.env.DEV) {
+    return false
+  }
+
+  return String(import.meta.env.VITE_USE_REMOTE_SUPABASE_AUTH || '').trim().toLowerCase() !== 'true'
 }
 
 function getHeaders(accessToken) {
@@ -65,6 +121,14 @@ async function fetchJson(url, options) {
 }
 
 async function fetchUser(accessToken) {
+  if (typeof accessToken === 'string' && accessToken.startsWith(devAuthPrefix)) {
+    const email = accessToken.slice(devAuthPrefix.length).trim() || 'demo@carebank.local'
+    return {
+      id: `dev_${email.replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '') || 'user'}`,
+      email,
+    }
+  }
+
   const { url } = getSupabaseConfig()
   return fetchJson(`${url}/auth/v1/user`, {
     headers: getHeaders(accessToken),
@@ -72,6 +136,13 @@ async function fetchUser(accessToken) {
 }
 
 async function refreshSession(refreshToken) {
+  if (typeof refreshToken === 'string' && refreshToken.startsWith(devAuthPrefix)) {
+    const email = refreshToken.slice(`${devAuthPrefix}refresh:`.length).trim() || 'demo@carebank.local'
+    const session = devSessionFor(email)
+    saveSession(session)
+    return session
+  }
+
   const { url } = getSupabaseConfig()
   const payload = await fetchJson(`${url}/auth/v1/token?grant_type=refresh_token`, {
     method: 'POST',
@@ -89,7 +160,7 @@ async function refreshSession(refreshToken) {
 }
 
 async function upsertProfile(session) {
-  if (!session?.access_token || !session?.user?.id) return
+  if (!session?.access_token || !session?.user?.id || isDevAuthSession(session)) return
 
   const { url } = getSupabaseConfig()
   try {
@@ -115,6 +186,15 @@ export async function restoreSession() {
   const stored = loadStoredSession()
   if (!stored?.access_token) {
     return { session: null, notice: '' }
+  }
+
+  if (isDevAuthSession(stored)) {
+    const session = {
+      ...stored,
+      user: stored.user || (await fetchUser(stored.access_token)),
+    }
+    saveSession(session)
+    return { session, notice: '' }
   }
 
   try {
@@ -146,51 +226,86 @@ export async function restoreSession() {
 }
 
 export async function signUp(email, password) {
-  const { url } = getSupabaseConfig()
-  const payload = await fetchJson(`${url}/auth/v1/signup`, {
-    method: 'POST',
-    headers: getHeaders(),
-    body: JSON.stringify({ email, password }),
-  })
+  if (shouldUseLocalDevelopmentAuth()) {
+    const session = devSessionFor(email)
+    saveSession(session)
+    return { session, message: 'Using the local demo session in development.' }
+  }
 
-  if (!payload.access_token) {
-    return {
-      session: null,
-      message: 'Account created. You can sign in now.',
+  try {
+    const { url } = getSupabaseConfig()
+    const payload = await fetchJson(`${url}/auth/v1/signup`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ email, password }),
+    })
+
+    if (!payload.access_token) {
+      return {
+        session: null,
+        message: 'Account created. You can sign in now.',
+      }
     }
-  }
 
-  const session = {
-    access_token: payload.access_token,
-    refresh_token: payload.refresh_token,
-    user: payload.user,
-  }
+    const session = {
+      access_token: payload.access_token,
+      refresh_token: payload.refresh_token,
+      user: payload.user,
+    }
 
-  saveSession(session)
-  await upsertProfile(session)
-  return { session, message: 'Account created successfully.' }
+    saveSession(session)
+    await upsertProfile(session)
+    return { session, message: 'Account created successfully.' }
+  } catch (error) {
+    if (shouldUseDevelopmentFallback(error)) {
+      const session = devSessionFor(email)
+      saveSession(session)
+      return { session, message: 'Using the local demo session because Supabase auth is unavailable in development.' }
+    }
+    throw error
+  }
 }
 
 export async function signIn(email, password) {
-  const { url } = getSupabaseConfig()
-  const payload = await fetchJson(`${url}/auth/v1/token?grant_type=password`, {
-    method: 'POST',
-    headers: getHeaders(),
-    body: JSON.stringify({ email, password }),
-  })
-
-  const session = {
-    access_token: payload.access_token,
-    refresh_token: payload.refresh_token,
-    user: payload.user,
+  if (shouldUseLocalDevelopmentAuth()) {
+    const session = devSessionFor(email)
+    saveSession(session)
+    return session
   }
 
-  saveSession(session)
-  await upsertProfile(session)
-  return session
+  try {
+    const { url } = getSupabaseConfig()
+    const payload = await fetchJson(`${url}/auth/v1/token?grant_type=password`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ email, password }),
+    })
+
+    const session = {
+      access_token: payload.access_token,
+      refresh_token: payload.refresh_token,
+      user: payload.user,
+    }
+
+    saveSession(session)
+    await upsertProfile(session)
+    return session
+  } catch (error) {
+    if (shouldUseDevelopmentFallback(error)) {
+      const session = devSessionFor(email)
+      saveSession(session)
+      return session
+    }
+    throw error
+  }
 }
 
 export async function signOut(session) {
+  if (isDevAuthSession(session)) {
+    clearSession()
+    return
+  }
+
   const { url } = getSupabaseConfig()
 
   if (session?.access_token) {
@@ -208,6 +323,10 @@ export async function signOut(session) {
 }
 
 export async function requestPasswordReset(email) {
+  if (shouldUseLocalDevelopmentAuth()) {
+    return 'Password reset is handled locally in development mode.'
+  }
+
   const { url } = getSupabaseConfig()
   if (!email.trim()) {
     throw new Error('Enter your email address before requesting a reset link.')

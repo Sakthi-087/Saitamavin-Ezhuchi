@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import httpx
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from fastapi.security import HTTPAuthorizationCredentials
 from starlette.websockets import WebSocketDisconnect
 
 from app.core.auth import get_current_user
@@ -19,6 +21,38 @@ from app.services.supabase import SupabaseService
 
 
 class TestSecurityStartup(unittest.TestCase):
+    def test_production_templates_include_required_envs(self):
+        root_env = Path(__file__).resolve().parents[2] / ".env.example"
+        backend_prod = Path(__file__).resolve().parents[1] / ".env.production"
+        frontend_env = Path(__file__).resolve().parents[2] / "carebank-frontend" / ".env.example"
+
+        root_content = root_env.read_text(encoding="utf-8")
+        backend_content = backend_prod.read_text(encoding="utf-8")
+        frontend_content = frontend_env.read_text(encoding="utf-8")
+
+        required_backend_keys = [
+            "APP_ENV=production",
+            "REQUIRE_STRICT_SECURITY=true",
+            "SUPABASE_URL=",
+            "SUPABASE_ANON_KEY=",
+            "SUPABASE_SERVICE_ROLE_KEY=",
+            "INTERNAL_METRICS_TOKEN=",
+            "FRONTEND_URL=",
+            "OPENROUTER_API_KEY=",
+            "AI_CATEGORIZATION_ENABLED=false",
+            "ENABLE_AUDIT_PERSISTENCE=true",
+            "ENABLE_LOCAL_EVENT_FALLBACK=false",
+            "ENABLE_SAMPLE_DATA_FALLBACK=false",
+            "ENABLE_WEBSOCKET_DEV_FALLBACK=false",
+            "RATE_LIMIT_ENABLED=true",
+        ]
+        for key in required_backend_keys:
+            self.assertIn(key, root_content)
+            self.assertIn(key, backend_content)
+
+        for key in ["VITE_API_URL=", "VITE_SUPABASE_URL=", "VITE_SUPABASE_ANON_KEY="]:
+            self.assertIn(key, frontend_content)
+
     def test_production_fails_if_sample_fallback_enabled(self):
         settings = Settings()
         settings.app_env = "production"
@@ -55,6 +89,38 @@ class TestSecurityStartup(unittest.TestCase):
         settings.enable_websocket_dev_fallback = False
         settings.supabase_url = "https://x.supabase.co"
         settings.supabase_service_role_key = ""
+        settings.internal_metrics_token = "token"
+        settings.frontend_url = "https://app.example.com"
+        with patch("os.getenv", return_value="openrouter-key"):
+            with self.assertRaises(SecurityStartupError):
+                validate_security_startup(settings)
+
+    def test_production_fails_if_audit_persistence_disabled(self):
+        settings = Settings()
+        settings.app_env = "production"
+        settings.require_strict_security = True
+        settings.enable_sample_data_fallback = False
+        settings.enable_websocket_dev_fallback = False
+        settings.enable_local_event_fallback = False
+        settings.enable_audit_persistence = False
+        settings.supabase_url = "https://x.supabase.co"
+        settings.supabase_service_role_key = "service"
+        settings.internal_metrics_token = "token"
+        settings.frontend_url = "https://app.example.com"
+        with patch("os.getenv", return_value="openrouter-key"):
+            with self.assertRaises(SecurityStartupError):
+                validate_security_startup(settings)
+
+    def test_production_fails_if_local_fallback_enabled(self):
+        settings = Settings()
+        settings.app_env = "production"
+        settings.require_strict_security = True
+        settings.enable_sample_data_fallback = False
+        settings.enable_websocket_dev_fallback = False
+        settings.enable_local_event_fallback = True
+        settings.enable_audit_persistence = True
+        settings.supabase_url = "https://x.supabase.co"
+        settings.supabase_service_role_key = "service"
         settings.internal_metrics_token = "token"
         settings.frontend_url = "https://app.example.com"
         with patch("os.getenv", return_value="openrouter-key"):
@@ -161,6 +227,19 @@ class TestSecurityRuntime(unittest.IsolatedAsyncioTestCase):
         with patch("httpx.AsyncClient.get", side_effect=httpx.RequestError("fail", request=httpx.Request("GET", "https://x"))):
             with self.assertRaises(HTTPException):
                 await service.verify_access_token("bad")
+
+    async def test_dev_fallback_accepts_local_token(self):
+        settings = Settings()
+        settings.app_env = "development"
+        settings.enable_sample_data_fallback = True
+        settings.supabase_url = "https://x.supabase.co"
+        settings.supabase_anon_key = "anon"
+        user = await get_current_user(
+            HTTPAuthorizationCredentials(scheme="Bearer", credentials="carebank-dev:svel00937@gmail.com"),
+            settings=settings,
+        )
+        self.assertEqual(user.email, "svel00937@gmail.com")
+        self.assertTrue(user.id.startswith("dev_"))
 
     async def test_rate_limiter_returns_429_after_limit(self):
         limiter = RateLimiter()

@@ -1,10 +1,40 @@
 const ENV_API_URL = import.meta.env.VITE_API_URL?.trim()
-const API_BASE_URL = import.meta.env.DEV
-  ? ENV_API_URL && /^(https?:\/\/)?(localhost|127\.0\.0\.1)(:\d+)?(\/.*)?$/i.test(ENV_API_URL)
-    ? ENV_API_URL
-    : 'http://127.0.0.1:8000'
-  : ENV_API_URL || 'http://localhost:8000'
-const DEFAULT_TIMEOUT_MS = 15000
+
+function isLocalHostname(hostname = '') {
+  return hostname === 'localhost' || hostname === '127.0.0.1'
+}
+
+function resolveLocalBackendUrl() {
+  if (typeof window === 'undefined') {
+    return 'http://127.0.0.1:8000'
+  }
+
+  const { protocol, hostname } = window.location
+  const localProtocol = protocol === 'https:' ? 'https:' : 'http:'
+
+  if (isLocalHostname(hostname)) {
+    return `${localProtocol}//${hostname}:8000`
+  }
+
+  return 'http://127.0.0.1:8000'
+}
+
+function resolveApiBaseUrl() {
+  if (import.meta.env.DEV) {
+    return resolveLocalBackendUrl()
+  }
+
+  if (ENV_API_URL) {
+    return ENV_API_URL
+  }
+
+  return typeof window !== 'undefined' && isLocalHostname(window.location.hostname)
+    ? resolveLocalBackendUrl()
+    : 'http://localhost:8000'
+}
+
+const API_BASE_URL = resolveApiBaseUrl()
+const DEFAULT_TIMEOUT_MS = 60000
 
 function mapSafeErrorMessage(status) {
   if (status === 401 || status === 403) return 'Your session has expired. Please sign in again.'
@@ -14,11 +44,11 @@ function mapSafeErrorMessage(status) {
   return 'We could not complete this request. Please try again.'
 }
 
-function toRealtimeUrl(baseUrl, userId, token) {
+function toRealtimeUrl(baseUrl, userId, ticket) {
   const url = new URL(baseUrl)
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
   url.pathname = `/ws/${encodeURIComponent(userId)}`
-  url.searchParams.set('token', token)
+  url.searchParams.set('ticket', ticket)
   return url.toString()
 }
 
@@ -37,11 +67,17 @@ async function apiRequest(path, { accessToken, timeoutMs = DEFAULT_TIMEOUT_MS, .
       headers,
       signal: controller.signal,
     })
-  } catch {
+  } catch (error) {
     clearTimeout(timeoutId)
-    const error = new Error('Network connection failed. Please check your connection and try again.')
-    error.isNetworkError = true
-    throw error
+    if (error?.name === 'AbortError') {
+      const timeoutError = new Error('The request took too long to complete. Please try again.')
+      timeoutError.isTimeoutError = true
+      throw timeoutError
+    }
+
+    const networkError = new Error('Network connection failed. Please check your connection and try again.')
+    networkError.isNetworkError = true
+    throw networkError
   } finally {
     clearTimeout(timeoutId)
   }
@@ -177,8 +213,15 @@ export function createManualTransaction(payload, accessToken) {
   })
 }
 
-export function connectRealtime(userId, token, handlers = {}) {
-  const ws = new WebSocket(toRealtimeUrl(API_BASE_URL, userId, token))
+export function requestRealtimeTicket(accessToken) {
+  return apiRequest('/realtime/ws-ticket', {
+    method: 'POST',
+    accessToken,
+  })
+}
+
+export function connectRealtime(userId, ticket, handlers = {}) {
+  const ws = new WebSocket(toRealtimeUrl(API_BASE_URL, userId, ticket))
   const { onOpen, onClose, onError, onMessage } = handlers
 
   ws.onopen = (event) => {

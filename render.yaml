@@ -11,14 +11,30 @@ services:
     
     # Environment variables
     envVars:
+      - key: APP_ENV
+        value: "production"
+      - key: REQUIRE_STRICT_SECURITY
+        value: "true"
       - key: SUPABASE_URL
         description: "Your Supabase project URL"
       - key: SUPABASE_ANON_KEY
         description: "Your Supabase anonymous key"
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        description: "Your Supabase service role key"
+      - key: INTERNAL_METRICS_TOKEN
+        description: "Internal metrics auth token"
       - key: OPENROUTER_API_KEY
         description: "Your OpenRouter API key (for LLM)"
       - key: FRONTEND_URL
         description: "Your Vercel frontend URL (e.g., https://yourproject.vercel.app)"
+      - key: AI_CATEGORIZATION_ENABLED
+        value: "false"
+      - key: RATE_LIMIT_ENABLED
+        value: "true"
+      - key: ENABLE_AUDIT_PERSISTENCE
+        value: "true"
+      - key: ENABLE_LOCAL_EVENT_FALLBACK
+        value: "false"
       - key: LLM_PROVIDER
         value: "openrouter"
       - key: LLM_BASE_URL
@@ -26,6 +42,8 @@ services:
       - key: LLM_MODEL
         value: "openai/gpt-4o-mini"
       - key: ENABLE_SAMPLE_DATA_FALLBACK
+        value: "false"
+      - key: ENABLE_WEBSOCKET_DEV_FALLBACK
         value: "false"
     
     # Auto-deploy on push

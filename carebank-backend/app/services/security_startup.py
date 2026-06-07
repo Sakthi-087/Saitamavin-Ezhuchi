@@ -19,8 +19,12 @@ def validate_security_startup(settings: Settings) -> None:
     failures: list[str] = []
     if settings.enable_sample_data_fallback:
         failures.append("ENABLE_SAMPLE_DATA_FALLBACK must be disabled in strict mode.")
+    if settings.enable_local_event_fallback:
+        failures.append("ENABLE_LOCAL_EVENT_FALLBACK must be disabled in strict mode.")
     if settings.enable_websocket_dev_fallback:
         failures.append("ENABLE_WEBSOCKET_DEV_FALLBACK must be disabled in strict mode.")
+    if not settings.enable_audit_persistence:
+        failures.append("ENABLE_AUDIT_PERSISTENCE must be enabled in strict mode.")
     if not settings.supabase_service_role_configured:
         failures.append("SUPABASE_SERVICE_ROLE_KEY is required in strict mode.")
     if not settings.internal_metrics_token:
@@ -48,4 +52,3 @@ def validate_security_startup(settings: Settings) -> None:
         for failure in failures:
             audit.log_security_startup_failure(failure, {"app_env": settings.app_env})
         raise SecurityStartupError(" ; ".join(failures))
-

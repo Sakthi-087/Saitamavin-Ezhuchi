@@ -1,6 +1,18 @@
 import '@testing-library/jest-dom'
-import { afterEach, vi } from 'vitest'
+import { afterEach, beforeEach, vi } from 'vitest'
 import { cleanup } from '@testing-library/react'
+
+function installResizeObserver() {
+  vi.stubGlobal('ResizeObserver', class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  })
+}
+
+beforeEach(() => {
+  installResizeObserver()
+})
 
 afterEach(() => {
   cleanup()
@@ -8,10 +20,4 @@ afterEach(() => {
   vi.clearAllMocks()
   vi.unstubAllGlobals()
   vi.useRealTimers()
-})
-
-vi.stubGlobal('ResizeObserver', class {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
 })

@@ -26,14 +26,23 @@ After creating the service, go to **Environment** and add:
 
 | Key | Value |
 |-----|-------|
+| `APP_ENV` | `production` |
+| `REQUIRE_STRICT_SECURITY` | `true` |
 | `SUPABASE_URL` | https://your-project.supabase.co |
 | `SUPABASE_ANON_KEY` | Get from Supabase → Settings → API Keys |
+| `SUPABASE_SERVICE_ROLE_KEY` | Your Supabase service role key |
+| `INTERNAL_METRICS_TOKEN` | Strong random token for `/metrics` and internal health |
 | `FRONTEND_URL` | `https://yourproject.vercel.app` (update after Vercel deploy) |
 | `OPENROUTER_API_KEY` | Get from https://openrouter.ai → API Keys |
+| `AI_CATEGORIZATION_ENABLED` | `false` unless you explicitly enable it |
 | `LLM_PROVIDER` | openrouter |
 | `LLM_BASE_URL` | https://openrouter.ai/api/v1 |
 | `LLM_MODEL` | openai/gpt-4o-mini |
+| `RATE_LIMIT_ENABLED` | `true` |
+| `ENABLE_AUDIT_PERSISTENCE` | `true` |
+| `ENABLE_LOCAL_EVENT_FALLBACK` | `false` |
 | `ENABLE_SAMPLE_DATA_FALLBACK` | false |
+| `ENABLE_WEBSOCKET_DEV_FALLBACK` | `false` |
 
 **Initial Deploy**: Render will auto-deploy from `render.yaml`
 - Your backend URL: `https://carebank-backend.onrender.com`
@@ -73,6 +82,15 @@ After Vercel deploy, go back to Render:
 2. Go to **Environment**
 3. Update `FRONTEND_URL` to your Vercel URL (e.g., `https://carebank-ai-wellness.vercel.app`)
 4. Service will auto-redeploy
+
+### Realtime websocket auth
+
+CareBank uses a short-lived websocket ticket flow in production:
+
+1. The frontend authenticates to `POST /realtime/ws-ticket` with the normal bearer token.
+2. The backend returns a one-time ticket with a TTL of 60 seconds or less.
+3. The browser opens `wss://.../ws/{user_id}?ticket=...`.
+4. The backend consumes the ticket once and rejects reused, expired, or user-mismatched tickets.
 
 ---
 
