@@ -211,7 +211,7 @@ class CategorizationService:
         deterministic = self._categorize_deterministic(user_id=user_id, description=description, user_category=user_category)
         if deterministic.category != "Uncategorized" and deterministic.confidence >= 0.5:
             return deterministic
-        if not self.ai.enabled or not self.ai.api_key:
+        if not self.ai.enabled:
             return deterministic
         ai_result = await self.ai.categorize(description)
         if ai_result:

@@ -119,6 +119,10 @@ class EventStore:
     def _persist_or_fallback(self, table: str, payload: dict[str, Any], *, critical: bool) -> None:
         if self._persist_service_role(table, payload):
             return
+        if not self.settings.enable_audit_persistence:
+            logger.warning("Persistence degraded mode for table=%s (local snapshot only).", table)
+            self._write(table, payload)
+            return
         if self.settings.enable_local_event_fallback or not self.settings.supabase_service_role_configured:
             logger.warning("Persistence degraded mode for table=%s (local fallback).", table)
             self._write(table, payload)
