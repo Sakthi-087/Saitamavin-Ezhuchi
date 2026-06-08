@@ -398,15 +398,6 @@ class SupabaseService:
             "amount": normalized_amount,
             "transaction_type": tx_type,
             "category": category_result.category,
-            "metadata": {
-                "raw_amount": raw_amount,
-                "normalized_amount": normalized_amount,
-                "subcategory": category_result.subcategory,
-                "category_confidence": category_result.confidence,
-                "category_source": category_result.source,
-                "category_matched_rule": category_result.matched_rule,
-                "category_reason": category_result.reason,
-            },
             "description": normalized_description,
             "created_at": created_at,
         }
@@ -434,15 +425,6 @@ class SupabaseService:
             "amount": normalized_amount,
             "transaction_type": tx_type,
             "category": category_result.category,
-            "metadata": {
-                "raw_amount": raw_amount,
-                "normalized_amount": normalized_amount,
-                "subcategory": category_result.subcategory,
-                "category_confidence": category_result.confidence,
-                "category_source": category_result.source,
-                "category_matched_rule": category_result.matched_rule,
-                "category_reason": category_result.reason,
-            },
             "description": normalized_description,
             "created_at": created_at,
         }
