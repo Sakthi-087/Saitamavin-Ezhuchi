@@ -23,10 +23,12 @@ async def get_financial_score(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> FinancialScoreResponse:
     await get_rate_limiter().enforce(request, user.id)
-    service = SupabaseService(get_settings())
+    settings = get_settings()
+    service = SupabaseService(settings)
     access_token = credentials.credentials if credentials else ""
     transactions = await service.fetch_transactions(access_token)
     logger.info("Financial-score route loaded transactions: count=%s user_id=%s", len(transactions), user.id)
     response = scoring_engine.calculate(transactions)
-    await service.persist_financial_score_snapshot(access_token, user_id=user.id, snapshot=response.model_dump())
+    if not settings.is_production and settings.enable_financial_score_persistence:
+        await service.persist_financial_score_snapshot(access_token, user_id=user.id, snapshot=response.model_dump())
     return response

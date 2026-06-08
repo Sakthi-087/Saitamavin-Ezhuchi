@@ -48,6 +48,13 @@ class Settings:
             "yes",
             "on",
         }
+        score_default = "true" if self.app_env != "production" else "false"
+        self.enable_financial_score_persistence = os.getenv("ENABLE_FINANCIAL_SCORE_PERSISTENCE", score_default).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         self.enable_local_event_fallback = os.getenv("ENABLE_LOCAL_EVENT_FALLBACK", "").strip().lower() in {
             "1",
             "true",

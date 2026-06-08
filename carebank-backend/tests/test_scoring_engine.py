@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 from app.core.auth import get_current_user
+from app.core.config import Settings
 from app.main import app
 from app.models.schemas import Transaction, UserContext
 from app.services.copilot_orchestrator import CopilotOrchestrator
@@ -116,9 +117,12 @@ class TestScoringRouteIntegration(unittest.IsolatedAsyncioTestCase):
             Transaction(date="2026-05-01", description="Salary", amount=-50000, category="Income"),
             Transaction(date="2026-05-02", description="Rent", amount=15000, category="Bills"),
         ]
-        with patch("app.services.supabase.SupabaseService.fetch_transactions", new=AsyncMock(return_value=txs)), patch(
-            "app.services.supabase.SupabaseService.persist_financial_score_snapshot", new=AsyncMock()
-        ) as persist_mock:
+        settings = Settings()
+        settings.app_env = "development"
+        settings.enable_financial_score_persistence = True
+        with patch("app.routes.financial_score.get_settings", return_value=settings), patch(
+            "app.services.supabase.SupabaseService.fetch_transactions", new=AsyncMock(return_value=txs)
+        ), patch("app.services.supabase.SupabaseService.persist_financial_score_snapshot", new=AsyncMock()) as persist_mock:
             response = self.client.get("/financial-score", headers={"Authorization": "Bearer t"})
             self.assertEqual(response.status_code, 200)
             body = response.json()
@@ -134,6 +138,21 @@ class TestScoringRouteIntegration(unittest.IsolatedAsyncioTestCase):
             self.assertIn("explainability", body)
             self.assertIn("confidence", body)
             persist_mock.assert_awaited()
+
+    async def test_financial_score_endpoint_skips_persistence_in_production(self):
+        txs = [
+            Transaction(date="2026-05-01", description="Salary", amount=-50000, category="Income"),
+            Transaction(date="2026-05-02", description="Rent", amount=15000, category="Bills"),
+        ]
+        settings = Settings()
+        settings.app_env = "production"
+        settings.enable_financial_score_persistence = True
+        with patch("app.routes.financial_score.get_settings", return_value=settings), patch(
+            "app.services.supabase.SupabaseService.fetch_transactions", new=AsyncMock(return_value=txs)
+        ), patch("app.services.supabase.SupabaseService.persist_financial_score_snapshot", new=AsyncMock()) as persist_mock:
+            response = self.client.get("/financial-score", headers={"Authorization": "Bearer t"})
+            self.assertEqual(response.status_code, 200)
+            persist_mock.assert_not_awaited()
 
     async def test_analyze_backward_compatibility(self):
         txs = [
