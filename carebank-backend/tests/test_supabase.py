@@ -44,3 +44,8 @@ class SupabaseServiceTests(unittest.TestCase):
         self.assertEqual(row["category"], "Food")
         self.assertEqual(row["description"], "Coffee shop")
         self.assertTrue(str(row["created_at"]).startswith("2026-04-09"))
+        self.assertIn("metadata", row)
+        self.assertNotIn("category_confidence", row)
+        self.assertNotIn("raw_amount", row)
+        self.assertEqual(row["metadata"]["raw_amount"], 245.5)
+        self.assertEqual(row["metadata"]["normalized_amount"], 245.5)
